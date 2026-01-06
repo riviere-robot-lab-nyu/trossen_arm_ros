@@ -35,6 +35,8 @@ import rclpy
 
 from controllers import ArmDemoNode, GripperDemoNode  # noqa: I100
 
+from scipy.interpolate import PchipInterpolator
+import numpy as np
 
 def main(args=None):
     rclpy.init(args=args)
@@ -45,14 +47,35 @@ def main(args=None):
     arm_home_position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     gripper_open_position = 0.04  # fully open
     gripper_closed_position = 0.0
+    
 
-    # Send to target position
-    arm.get_logger().info('Sending arm to target position...')
-    future = arm.send_goal(arm_target_position, duration_s=4.0)
-    rclpy.spin_until_future_complete(arm, future)
-    while arm._is_running:
-        rclpy.spin_once(arm)
-    arm.get_logger().info('Reached target position.')
+    # interpolate between waypoints
+    waypoints = np.array([arm_home_position, arm_home_position, arm_target_position, arm_target_position, arm_home_position, arm_home_position])
+    print("waypoints:", waypoints)
+    timepoints = np.array([0, 1, 3, 4, 6, 7])
+
+    interpolator_position = PchipInterpolator(timepoints, waypoints, axis=0)
+    interpolator_feedforward_velocity = interpolator_position.derivative()
+    interpolator_feedforward_acceleration = interpolator_feedforward_velocity.derivative()
+
+    start_time = time.time()
+    end_time = start_time + timepoints[-1]
+
+    while time.time() < end_time:
+        loop_start_time = time.time()
+        current_time = loop_start_time - start_time
+
+        positions = interpolator_position(current_time).tolist()
+        # feedforward_velocity = interpolator_feedforward_velocity(current_time)
+        # feedforward_acceleration = interpolator_feedforward_acceleration(current_time)
+
+        # Send to target position
+        arm.get_logger().info('Sending arm to target position...')
+        future = arm.send_goal(positions, duration_s=3)
+        rclpy.spin_until_future_complete(arm, future)
+        while arm._is_running:
+            rclpy.spin_once(arm)
+        arm.get_logger().info('Reached target position.')
 
     # Open gripper
     gripper.get_logger().info('Opening gripper...')
